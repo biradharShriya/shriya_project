@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Transcription and Synthesis</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #444;
+        }
+        .section {
+            margin-bottom: 20px;
+            padding: 20px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        #transcript, #synthesizedAudio, #sentiment, #transcriptLink, #synthesizedText {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Transcription and Synthesis</h1>
+        
+        <div class="section">
+            <h2>Record Audio</h2>
+            <button id="startRecording">Start Recording</button>
+            <button id="stopRecording" disabled>Stop Recording</button>
+            <div id="transcript"></div>
+            <div id="sentiment"></div>
+            <div id="transcriptLink"></div>
+        </div>
+
+        <div class="section">
+            <h2>Text to Speech</h2>
+            <input type="text" id="textInput" placeholder="Enter text to synthesize">
+            <button id="synthesizeButton">Synthesize Speech</button>
+            <div id="synthesizedAudio"></div>
+            <div id="synthesizedText"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+
+        document.getElementById('startRecording').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+                mediaRecorder.start();
+
+                audioChunks = [];
+                mediaRecorder.addEventListener("dataavailable", event => {
+                    audioChunks.push(event.data);
+                });
+
+                document.getElementById('startRecording').disabled = true;
+                document.getElementById('stopRecording').disabled = false;
+                document.getElementById('transcript').textContent = 'Recording...';
+            } catch (err) {
+                console.error("Error accessing microphone:", err);
+                alert("Error accessing microphone. Please ensure you have given permission.");
+            }
+        });
+
+        document.getElementById('stopRecording').addEventListener('click', () => {
+            if (mediaRecorder && mediaRecorder.state !== "inactive") {
+                mediaRecorder.stop();
+                document.getElementById('startRecording').disabled = false;
+                document.getElementById('stopRecording').disabled = true;
+                document.getElementById('transcript').textContent = 'Processing...';
+
+                mediaRecorder.addEventListener("stop", () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+                    const formData = new FormData();
+                    formData.append("audio", audioBlob, "recording.webm");
+
+                    fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            document.getElementById('transcript').textContent = `Error: ${data.error}`;
+                        } else {
+                            document.getElementById('transcript').textContent = `Transcript: ${data.transcript}`;
+                            document.getElementById('sentiment').textContent = `Sentiment: ${data.sentiment}`;
+                            document.getElementById('transcriptLink').innerHTML = `<a href="${data.file_url}" target="_blank">View Transcript</a>`;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        document.getElementById('transcript').textContent = 'An error occurred during transcription';
+                    });
+                });
+            }
+        });
+
+        document.getElementById('synthesizeButton').addEventListener('click', () => {
+            const text = document.getElementById('textInput').value;
+            if (!text) {
+                alert("Please enter some text to synthesize.");
+                return;
+            }
+
+            fetch('/synthesize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ text: text }),
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                const audioElement = document.createElement('audio');
+                audioElement.src = data.audio_url;
+                audioElement.controls = true;
+                document.getElementById('synthesizedAudio').innerHTML = '';
+                document.getElementById('synthesizedAudio').appendChild(audioElement);
+                document.getElementById('synthesizedText').innerHTML = `
+                    <a href="${data.text_url}" target="_blank">View Synthesized Text</a><br>
+                    <a href="${data.audio_url}" target="_blank">Download Audio File</a><br>
+                    Sentiment: ${data.sentiment}
+                `;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred during speech synthesis');
+            });
+        });
+    </script>
+</body>
+</html>
